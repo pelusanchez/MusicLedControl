@@ -1,0 +1,631 @@
+<html>
+	<head>
+		<title>Led Control PreAlpha v4</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<style type="text/css">
+			html, body {
+				background:#FFF;
+				padding:0;
+				margin:0;
+				width:100%;
+				height:100%;
+			}
+
+			.td_slider {
+				min-width:100px;
+				width:auto;
+			}
+
+			.slider {
+
+				width: 200px;
+				height: 25px;
+				opacity: 0.7;
+				-webkit-transition: .2s;
+				transition: opacity .2s;
+			}
+
+		</style>
+		<script src="socket.js"></script>
+		<script type="text/javascript" src="hsl2rgb.js"></script>
+		<script type="text/javascript">
+
+			var socket = io.connect('http://localhost:8080');
+
+			var backEnviadoR=new Date();
+			var backEnviadoG=new Date();
+			var backEnviadoB=new Date();
+			function enviar(data){
+					socket.emit('d',data);
+			}
+
+			function constraint(a,b,c){
+				if(a<b){
+					return b;
+				}else if(a>c){
+					return c;
+				}else{
+					return a;
+				}
+			}
+
+
+			var mapa = (function(){
+				var r=[];
+				for(var i = 0; i<=35; i++){
+					if(i<10){
+						r[i] = ""+i;
+					}else{
+						r[i] = String.fromCharCode(55+i);
+					}
+				}
+				return r;
+			})();
+			function getCode(value){
+				return mapa[parseInt(value/35)]+mapa[value%35];
+			}
+			function ponerR(value){
+				if(new Date()-backEnviadoR>50){
+					enviar(getCode(gamma(value)));
+					backEnviadoR=new Date();
+				}
+				
+			}
+
+			function ponerG(value){
+				
+				if(new Date()-backEnviadoG>50){
+					enviar(getCode(512+gamma(value)));
+					backEnviadoG=new Date();
+				}
+			}
+
+			function ponerB(value){				
+				if(new Date()-backEnviadoB>50){
+					enviar(getCode(256+gamma(value)));
+					backEnviadoB=new Date();
+				}
+			}
+
+
+
+			// Programa
+
+			var program=0;
+			// Audio Analysis
+
+			var canvas, ctx, el, audiogg, analyser, analyserBufferLength, analyserDataArray, backTime, backBeatTime=new Date();
+			var backEnergy;
+			var onPeak=false;
+			var onPeakMax=0;
+			var onPeakEnergy=0;
+			var onPeakBackFlux=0;
+			var onPeakTriggered=false;
+			var onPeakTime=0;
+			var onPeakLastFlux=0;
+
+			var meanEnergy=[];// Mean one second energy
+			var meanEnergyBackTime=0;// Mean one second energy
+			var meanEnergyIndex=0;
+
+
+			var thresholdEnergy=0;
+			var thresholdEnergyTime=new Date();
+			var thresholdEnergyIncrease=false;
+			var thresholdEnergyTimeConstant = 0.0001;
+
+			var lastBeat=new Date();
+			var mapaCanvas, mapaCanvasLeft=0, mapaCanvasCtx;
+
+			var outputColorElm;
+
+			var backAnalyserDataArray, backAnalyserDataArrayIndex=0;
+
+
+
+			var roots=[];
+			var rootsI=0;
+			var rootsTime=0;
+
+
+			var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+			// Color
+			var hue=0;
+
+			var sliderHue=0;
+			var sliderSesgo=180;
+			var sliderTiming=2000;
+			var sliderPowerFactor=1;
+			var sliderBrightness=1;
+
+			var __FFT_SIZE__=2048*2;
+
+			function outputColor(rgbColor){
+				if(!outputColorElm){
+					outputColorElm=document.getElementById("outputColor");
+				}
+				outputColorElm.style.background="rgb("+rgbColor[0]+","+rgbColor[1]+","+rgbColor[2]+")";
+			}
+			
+
+			function loadMusic(){
+														audiogg = new Audio("ddl.mp3");			// AOISUYIDUGNUIYWD
+				audiogg.play();
+				//audiogg.currentTime=0;
+
+				source = audioCtx.createMediaElementSource(audiogg);
+				analyser = audioCtx.createAnalyser();
+				analyser.fftSize = __FFT_SIZE__;
+				analyser.smoothingTimeConstant=0.8;
+				//analyser.maxDecibels=-10;
+				//analyser.minDecibels=-70;
+				analyserBufferLength = analyser.frequencyBinCount;
+				
+				analyserDataArray = new Uint8Array(analyserBufferLength);
+				
+				backAnalyserDataArray=new Uint8Array(analyserBufferLength);
+				
+				derivativeAnalyserDataArray = new Uint8Array(analyserBufferLength);
+
+				source.connect(analyser);
+				source.connect(audioCtx.destination);
+				backTime=new Date();
+				meanEnergyBackTime=new Date();
+				analiza();
+			}
+
+
+			function gamma(value){
+
+				return value;//parseInt(Math.pow(value/255, 1.2)*255);
+			}
+
+			let softmax=(x)=>0.5+Math.atan(6*x)/Math.PI;
+			let normalExp=(x)=>{
+				if(x>1){ return 1;}
+				if(x<0){ return 0;}
+				return Math.exp((x-1)*4);
+			};
+			let colorBeat=(fracEnergy)=>{
+				var deltaHue=0, distanceHue;
+				if(fracEnergy>1.5){ fracEnergy=1.5;}
+				if(new Date()-lastBeat > sliderTiming){
+					//console.log("MiniBeat"+fracEnergy);
+					lastBeat=new Date();
+					deltaHue=fracEnergy*90*sliderPowerFactor*(1-2*Math.random());
+				}else{return;}
+
+				hue+=deltaHue;
+				if(hue<0){hue+=360;}
+				hue%=360;
+
+				if(Math.abs(hue-sliderHue)>180){
+					distanceHue=360-Math.abs(hue-sliderHue);
+				}else{
+					distanceHue=Math.abs(hue-sliderHue);
+				}
+
+				if(distanceHue>sliderSesgo){
+					hue=hue*sliderSesgo/180+sliderHue-sliderSesgo;
+				}
+
+				if(hue<0){hue+=360;}
+				hue%=360;
+			};
+
+			function compressor(x){
+				if(x>1){ return 1;}
+				if(x<0){ return 0;}
+				
+				return x;//Math.pow(x,3);
+			}
+
+
+			let square=(x)=>{
+				if(x>1){ return 1;}
+				if(x<0){ return 0;}
+				
+				return x*x;//Math.pow(x,3);
+			}
+
+
+			let normalExpArray = (analyserDataArray,max)=> {
+				let len=analyserDataArray.length;
+				var returnArray=new Uint8Array(len);
+				while(len--){
+					returnArray[len]=(analyserDataArray[len]/max)*max;
+				}
+				return returnArray;
+			};
+
+			let copyArray=(arr)=>{
+				var r=[];
+				var i=arr.length;
+				while(i--){
+					r[i]=arr[i];
+				}
+				return r;
+			};
+
+			let convertAnalysisArray=(analyserDataArray,max)=> {
+				let len=analyserDataArray.length;
+				var returnArray=new Uint8Array(len);
+				while(len--){
+					returnArray[len]=Math.log(analyserDataArray[len]/max+1)/Math.log(2)*max;
+				}
+				return returnArray;
+			};
+
+			let lightnessCompressor=(x)=>{
+				var y=1-2*x;
+				return x;
+			};
+
+			let normalLog=(x)=>Math.log(x+1)/Math.log(2);
+
+			let computeRMS=(x)=> {
+				var rms=0;
+				var i=x.length;
+				while(i--){
+					rms+=x[i];
+				}
+				rms/=x.length;
+				return Math.sqrt(rms);
+			}
+
+			let lightnessGamma=(x)=>{
+				if(x>1){ return 1;}
+				if(x<0){ return 0;}
+				return Math.pow(x,3.2);
+			};
+
+			let hueSesgo=(hue)=>{
+				if(Math.abs(hue-sliderHue)>180){
+					distanceHue=360-Math.abs(hue-sliderHue);
+				}else{
+					distanceHue=Math.abs(hue-sliderHue);
+				}
+
+				if(distanceHue>sliderSesgo){
+					hue=hue*sliderSesgo/180+sliderHue-sliderSesgo;
+				}
+
+				if(hue<0){hue+=360;}
+				hue%=360;
+				return hue;
+			}
+
+			var backRMS, backEE;
+			var onBeatEnergy;
+			var onBeat=false;
+			var cuadrante=60;
+			var backBassBand=0;
+			var backB=0;
+
+			var backAnalysis=0;
+			var backFlux=0;
+
+			var alpha=0.2;
+			var backMeanEnergyValue=0;
+
+			function analiza(){
+				var energy=0;
+				var dateNow=+new Date();
+				var RMS=0;
+
+				var bandas=[0,0,0,0,0,0];
+				var bassBand=0;
+
+				analyser.getByteFrequencyData(analyserDataArray);
+				
+				//analyserDataArray=convertAnalysisArray(analyserDataArray,256);
+
+				var len=analyserDataArray.length;
+				var width=canvas.width/len;
+				var height=canvas.height;
+
+				var lightness=0;
+
+				var cumulativeEnergy=0;
+				var meanEnergyValue=0;
+
+				
+
+				ctx.clearRect(0,0, canvas.width, canvas.height);
+
+
+
+				ctx.beginPath();
+				ctx.fillStyle="#FF0000";
+
+				for(var i = 0; i<len; i++){
+					energy+=analyserDataArray[i]/__FFT_SIZE__/2/256;
+
+					bandas[parseInt(i*6/len)]+=analyserDataArray[i]/__FFT_SIZE__/2/256*6;
+					if(i<128){
+						bassBand+=analyserDataArray[i]/256/128;
+					}else{
+						bassBand+=analyserDataArray[i]/256/128*Math.exp(-Math.pow(i-128,2));
+					}
+
+					ctx.fillRect(i*width, height-analyserDataArray[i], width,height);
+
+				}
+
+				ctx.stroke();
+
+				// Calculate de middle point
+				
+				for(var i = 0; i<len; i++){
+					cumulativeEnergy+=analyserDataArray[i]/__FFT_SIZE__/2/256;
+					if(cumulativeEnergy>=energy*0.5){
+						
+						meanEnergyValue=i/len;
+						break;
+					}
+
+				}
+
+				ctx.beginPath();
+				ctx.fillStyle="#0000FF";
+
+				meanEnergyValue=meanEnergyValue*alpha+(1-alpha)*backMeanEnergyValue;
+
+				ctx.fillRect(meanEnergyValue*len*width, 0, width,height);
+
+				ctx.stroke();
+
+				// MEAN ENERGY BLOCK
+
+
+
+
+				// BASS BAND
+
+				ctx.beginPath();
+				
+
+				ctx.strokeStyle="#00FFFF";
+				ctx.moveTo(0,height-bassBand*256);
+				ctx.lineTo(width*128,height-bassBand*256);
+
+				ctx.stroke();
+
+				
+
+				mapaCanvasLeft++;
+				if(mapaCanvasLeft>900){
+					mapaCanvasCtx.clearRect(0,0, mapaCanvas.width, mapaCanvas.height);
+					mapaCanvasLeft=0;
+					
+				}
+
+
+				// AVERAGE FOR RMS
+				if(dateNow-rootsTime > 100){rootsTime=+new Date(); rootsI=0;}
+				roots[rootsI++]=energy;
+				RMS=computeRMS(roots);
+
+				var lE=0;
+				if(bandas[0]>bandas[2] && bandas[0]>bandas[3]){
+					lE=bandas[0]*0.8+bandas[2]+bandas[3];
+				}
+
+				if(bandas[2]>bandas[0] && bandas[2]>bandas[3]){
+					lE=bandas[2]*0.8+bandas[0]+bandas[3];
+				}
+
+				if(bandas[3]>bandas[2] && bandas[3]>bandas[1]){
+					lE=bandas[3]*0.8+bandas[0]+bandas[2];
+				}
+				
+
+				//console.log(bassBand);
+				lightness=0.05+lE;//0.05+bassBand;//(0.4*bassBand+0.1*bandas[1]+0.6*bandas[2]);
+				if(lightness>1){lightness=1;}
+				//console.log(lightness);
+
+
+
+				/*
+				mapaCanvasCtx.strokeStyle="#000000";
+				mapaCanvasCtx.moveTo(mapaCanvasLeft,height-(backRMS)*256);
+				mapaCanvasCtx.lineTo(mapaCanvasLeft+1,height-(RMS)*256);
+				mapaCanvasCtx.stroke();*/
+
+				//var EE=(energy-meanEnergyTotal);
+
+				// Compute mean Energy! (normalized!)
+				if(new Date()-meanEnergyBackTime<1000){
+					meanEnergy[meanEnergyIndex]=energy;
+					meanEnergyIndex++;
+				}else{
+					meanEnergyBackTime=new Date();
+					meanEnergyIndex=0;
+				}
+				var meanEnergyTotal=meanEnergy.reduce(function(a,b){return a+b}, 0)/meanEnergy.length;
+
+				// Get Energy Flux (NORMALIZED!)
+				var val, flux = 0;
+        		for(var i = 0; i < analyserDataArray.length; i++ ){
+        			val=(analyserDataArray[i] - backAnalysis[i])/__FFT_SIZE__/2/256;
+        			flux += (val<0)? 0 : val;
+        		}
+        		if(flux!=flux){flux = 0;}
+        		if(backFlux!=backFlux){backFlux = 0;}
+        		flux=alpha*flux+(1-alpha)*backFlux;
+
+        		var realFlux, realMeanEnergyTotal=meanEnergyTotal*256;
+        		realFlux=flux*__FFT_SIZE__*2;
+
+        		
+
+
+        		ctx.font = "10px Arial";
+				ctx.fillText("<E>="+parseInt(realMeanEnergyTotal*100)/100,10,27);
+				ctx.fillText("F="+parseInt(realFlux),10,39);
+				ctx.fillText("FPS:"+parseInt(1000/(backTime-dateNow)),10,49);
+
+
+
+
+
+        		mapaCanvasCtx.beginPath();
+        		mapaCanvasCtx.strokeStyle="#000000";
+        		if(dateNow-onPeakTime>3000){
+        			//cuadrante
+        			//console.log("program1 working..."+meanEnergyValue);
+        			//var val=(meanEnergyValue<0.1)? 300-2400*meanEnergyValue : 120-133.33*(meanEnergyValue-0.1);
+        			//ctx.fillText("<EV>="+parseInt(meanEnergyValue*100)/100+"-> Val="+val,10,49);
+
+        			hue+=(dateNow-backTime)/1000;//hueSesgo(val);
+        		}else{
+        			hue=cuadrante+flux*100*60;
+        		}
+
+        		// PEAK DETECTION
+        		if(realFlux>realMeanEnergyTotal*2){
+					if(!onPeak && (dateNow-onPeakTime>300 || onPeakLastFlux<flux)){
+						onPeak=true;
+						onPeakEnergy=flux;
+						onPeakBackFlux=0;
+						onPeakTriggered=false;
+					}
+
+					if(onPeak && !onPeakTriggered){
+						if(onPeakBackFlux<flux){
+							onPeakBackFlux=flux;
+						}else{
+							
+							onPeakTriggered=true;
+							if(square(onPeakBackFlux*100)>0.2){
+								onPeakLastFlux=onPeakBackFlux;
+								onPeakTime=dateNow;
+								mapaCanvasCtx.fillStyle="hsl("+square(onPeakBackFlux*100)*300+",100%,50%)";
+								//console.log("FLUX="+square(onPeakBackFlux*100));
+								mapaCanvasCtx.fillRect(mapaCanvasLeft, 0, 1, 100);
+								if(square(onPeakBackFlux*100)>0.6){
+									var direction=(Math.random()<0.5) ? -1 : 1;
+
+									cuadrante+=square(onPeakBackFlux*100)*(30+Math.random()*60)*direction;
+									cuadrante%=360;
+									cuadrante=hueSesgo(cuadrante);
+
+								}
+							}
+						}
+					}
+
+
+					mapaCanvasCtx.moveTo(mapaCanvasLeft,height-backFlux*__FFT_SIZE__*2);
+					mapaCanvasCtx.lineTo(mapaCanvasLeft+1,height-realFlux);
+
+				}else{
+					if(onPeak){
+						onPeak=false;
+						onPeakTriggered=false;
+					}
+					mapaCanvasCtx.moveTo(mapaCanvasLeft,height-realMeanEnergyTotal);
+					mapaCanvasCtx.lineTo(mapaCanvasLeft+1,height-realMeanEnergyTotal);
+
+				}
+				mapaCanvasCtx.stroke();
+
+
+				
+
+				
+				mapaCanvasCtx.beginPath();
+        		mapaCanvasCtx.strokeStyle="#0000FF";
+				mapaCanvasCtx.moveTo(mapaCanvasLeft,height-backRMS*128);
+				mapaCanvasCtx.lineTo(mapaCanvasLeft+1,height-RMS*128);
+				mapaCanvasCtx.stroke();
+
+				backFlux=flux;
+
+
+
+				if(hue<0){hue+=360;}
+				hue%=360;
+
+				
+
+				var rgbColor=hsl2rgb(parseInt(hue),100, lightnessGamma(lightness*sliderBrightness)*100);
+
+				ponerR(rgbColor[0]);
+				ponerG(rgbColor[1]);
+				ponerB(rgbColor[2]);
+				outputColor(rgbColor);
+
+
+
+
+
+				
+
+
+				backRMS=RMS;
+
+				backAnalysis=copyArray(analyserDataArray);
+				backMeanEnergyValue=meanEnergyValue;
+				backTime=dateNow;
+				window.requestAnimationFrame(analiza);
+			}
+
+
+
+
+			window.onload=function(){
+				canvas=document.getElementById("main_canvas");
+				mapaCanvas=document.getElementById("mapa_canvas");
+
+				ctx=canvas.getContext("2d");
+				mapaCanvasCtx=mapaCanvas.getContext("2d");
+				document.getElementById("slider_sesgo").addEventListener("input",function(){
+					document.getElementById("slider_sesgo_label").innerText="Sesgo ("+this.value+")";
+					sliderSesgo=parseInt(this.value);});
+				document.getElementById("slider_hue").addEventListener("input",function(){
+					document.getElementById("slider_hue_label").innerText="Hue ("+this.value+")";
+					sliderHue=parseInt(this.value);});
+				document.getElementById("slider_timing").addEventListener("input",function(){
+					document.getElementById("slider_timing_label").innerText="Color timing ("+this.value+"ms)";
+					sliderTiming=parseInt(this.value);});
+
+				document.getElementById("slider_brightness").addEventListener("input",function(){
+					document.getElementById("slider_brightness_label").innerText="Brightness ("+this.value+"%)";
+					sliderBrightness=parseInt(this.value)/100;});
+
+				
+
+				document.getElementById("slider_power_factor").addEventListener("input",function(){
+					sliderPowerFactor=parseInt(this.value)/10;
+					document.getElementById("slider_power_factor_label").innerText="Power factor (x"+sliderPowerFactor+")";
+				});
+					
+				loadMusic();
+				
+			}		
+		</script>
+	</head>
+	<body>
+		<canvas id="main_canvas" width="600" height="256" style="position:absolute; top:0px; left:0px;width:600px; height:400px; border:1px solid #000; z-index:1; background: #FFF;">
+			
+		</canvas>
+		<canvas id="mapa_canvas" width="900" height="512" style="position:absolute; top:0px; left:600px;width:900px; height:512px; border:1px solid #000; z-index:1; background: #FFF;">
+			
+		</canvas>
+		<div id="outputColor" style="position:absolute; top:400px; left:0px; width:50px; height:50px;"></div>
+		<div id="panel" style="position:absolute; top:450; left:0px; width:200px; height:auto;">
+			<table border="0">
+
+				<tr><td class="td_slider"><span id="slider_sesgo_label">Sesgo</span>:</td><td><input type="range" min="0" max="180" value="180" class="slider" id="slider_sesgo"></td></tr>
+				<tr><td class="td_slider"><span id="slider_hue_label">Hue</span>:</td><td><input type="range" min="0" max="360" value="0" class="slider" id="slider_hue"></td></tr>
+				<tr><td class="td_slider"><span id="slider_timing_label">Color timing (2000ms)</span>:</td><td><input type="range" min="0" max="10000" value="2000" class="slider" id="slider_timing"></td></tr>
+				<tr><td class="td_slider"><span id="slider_power_factor_label">Power factor (x1)</span>:</td><td><input type="range" min="0" max="100" value="10" class="slider" id="slider_power_factor"></td></tr>
+				<tr><td class="td_slider"><span id="slider_brightness_label">Brightness (100%)</span>:</td><td><input type="range" min="0" max="100" value="100" class="slider" id="slider_brightness"></td></tr>
+			</table>
+		</div>
+		
+	</body>
+</html>

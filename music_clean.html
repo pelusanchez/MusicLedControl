@@ -1,0 +1,450 @@
+<html>
+	<head>
+		<title>Led Control PreAlpha</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<style type="text/css">
+			html, body {
+				background:#FFF;
+				padding:0;
+				margin:0;
+				width:100%;
+				height:100%;
+			}
+
+			.td_slider {
+				min-width:100px;
+				width:auto;
+			}
+
+			.slider {
+
+				width: 200px; /* Full-width */
+				height: 25px; /* Specified height */
+				opacity: 0.7; /* Set transparency (for mouse-over effects on hover) */
+				-webkit-transition: .2s; /* 0.2 seconds transition on hover */
+				transition: opacity .2s;
+			}
+
+		</style>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.0.4/socket.io.js"></script>
+		<script type="text/javascript">
+
+			var socket = io.connect('http://192.168.0.13:8080');
+
+			var backEnviadoR=new Date();
+			var backEnviadoG=new Date();
+			var backEnviadoB=new Date();
+			function enviar(data){
+				//if(new Date()-backEnviado>50){
+					socket.emit('d',data);
+				//	backEnviado=new Date();
+				//}
+			}
+
+			function hsl2rgb(h,s,l){s=s/100;l=l/100;var c,x,m,rgb;c=(1-Math.abs(2*l-1))*s;x=c*(1-Math.abs(((h/60)%2)-1));m=l-c/2;if(h>=0&&h<60)rgb=[c,x,0];if(h>=60&&h<120)rgb=[x,c,0];if(h>=120&&h<180)rgb=[0,c,x];if(h>=180&&h<240)rgb=[0,x,c];if(h>=240&&h<300)rgb=[x,0,c];if(h>=300&&h<360)rgb=[c,0,x];return rgb.map(v=>255*(v+m)|0);}
+
+
+			
+
+
+			function constraint(a,b,c){
+				if(a<b){
+					return b;
+				}else if(a>c){
+					return c;
+				}else{
+					return a;
+				}
+			}
+
+
+			var mapa = (function(){
+				var r=[];
+				for(var i = 0; i<=35; i++){
+					if(i<10){
+						r[i] = ""+i;
+					}else{
+						r[i] = String.fromCharCode(55+i);
+					}
+				}
+				return r;
+			})();
+			function getCode(value){
+				return mapa[parseInt(value/35)]+mapa[value%35];
+			}
+			function ponerR(value){
+				if(new Date()-backEnviadoR>50){
+					enviar(getCode(value));
+					backEnviadoR=new Date();
+				}
+				
+			}
+
+			function ponerG(value){
+				
+				if(new Date()-backEnviadoG>50){
+					enviar(getCode(512+value));
+					backEnviadoG=new Date();
+				}
+			}
+
+			function ponerB(value){				
+				if(new Date()-backEnviadoB>50){
+					enviar(getCode(256+value));
+					backEnviadoB=new Date();
+				}
+			}
+
+			// Audio Analysis
+
+			var canvas, ctx, el, audiogg, analyser, analyserBufferLength, analyserDataArray, backTime, backBeatTime=new Date();
+			var backEnergy, thresholdEnergy;
+			var onPeak=false;
+			var onPeakMax=0;
+
+			var meanEnergy=[];// Mean one second energy
+			var meanEnergyBackTime=0;// Mean one second energy
+			var meanEnergyIndex=0;
+			var thresholdEnergyTime=new Date();
+
+			var lastBeat=new Date();
+			var mapaCanvas, mapaCanvasLeft=0, mapaCanvasCtx;
+
+			var outputColorElm;
+
+			var backAnalyserDataArray, backAnalyserDataArrayIndex=0;
+
+
+			var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+			// Color
+			var hue=0;
+
+			var sliderHue=0;
+			var sliderSesgo=180;
+			var sliderTiming=300;
+			var sliderPowerFactor=1;
+
+			function outputColor(rgbColor){
+				if(!outputColorElm){
+					outputColorElm=document.getElementById("outputColor");
+				}
+				outputColorElm.style.background="rgb("+rgbColor[0]+","+rgbColor[1]+","+rgbColor[2]+")";
+			}
+			
+
+			function loadMusic(){
+				audiogg = new Audio("shm_gh.mp3");
+				
+				audiogg.play();
+				source = audioCtx.createMediaElementSource(audiogg);
+				analyser = audioCtx.createAnalyser();
+				analyser.fftSize = 512;
+				//analyser.smoothingTimeConstant=;
+				analyserBufferLength = analyser.frequencyBinCount;
+				
+				analyserDataArray = new Uint8Array(analyserBufferLength);
+				
+					backAnalyserDataArray=new Uint8Array(analyserBufferLength);
+				
+				derivativeAnalyserDataArray = new Uint8Array(analyserBufferLength);
+
+				source.connect(analyser);
+				source.connect(audioCtx.destination);
+				backTime=new Date();
+				meanEnergyBackTime=new Date();
+				analiza();
+			}
+
+			let normalExp=(x)=>Math.exp((x-1)*4);
+
+			let colorBeat=(fracEnergy)=>{
+				var deltaHue=0, distanceHue;
+				/*if(fracEnergy>1.2 && new Date()-lastBeat > sliderTiming){
+					//console.log("SuperBeat");
+					lastBeat=new Date();
+					deltaHue=180*fracEnergy*(1-Math.random());
+				}else if(fracEnergy>1.1 && new Date()-lastBeat > sliderTiming){
+					//console.log("LargeBeat");
+					lastBeat=new Date();
+					deltaHue=90*fracEnergy*(1-Math.random());
+				}else if(new Date()-lastBeat > sliderTiming){
+					//console.log("MiniBeat"+fracEnergy);
+					lastBeat=new Date();
+					deltaHue=fracEnergy*10*(1-2*Math.random());
+				}else{return;}*/
+
+				if(new Date()-lastBeat > sliderTiming){
+					//console.log("MiniBeat"+fracEnergy);
+					lastBeat=new Date();
+					deltaHue=fracEnergy*90*sliderPowerFactor*(1-2*Math.random());
+				}else{return;}
+
+				hue+=deltaHue;
+				if(hue<0){hue+=360;}
+				hue%=360;
+
+				if(Math.abs(hue-sliderHue)>180){
+					distanceHue=360-Math.abs(hue-sliderHue);
+				}else{
+					distanceHue=Math.abs(hue-sliderHue);
+				}
+
+				if(distanceHue>sliderSesgo){
+					hue=hue*sliderSesgo/180+sliderHue-sliderSesgo;
+				}
+
+				if(hue<0){hue+=360;}
+				hue%=360;
+			};
+
+			function compressor(x){
+				if(x>1){ return 1;}
+				if(x<0){ return 0;}
+				
+				return x*x;
+			}
+
+			function analiza(){
+				var dt, dEnergy, energy=0;
+
+				var gray, grayR, grayG, grayB;
+
+				var bandas=[0,0,0];
+
+				analyser.getByteFrequencyData(analyserDataArray);
+				//console.log(analyserDataArray);
+				dt=new Date()-backTime;
+				var len=analyserDataArray.length;
+				var width=canvas.width/len;
+				var height=canvas.height;
+
+
+				
+
+				ctx.clearRect(0,0, canvas.width, canvas.height);
+
+
+				ctx.beginPath();
+
+				ctx.fillStyle="#FF0000";
+
+				for(var i = 0; i<len; i++){
+					energy+=analyserDataArray[i]/256/128;
+					ctx.fillRect(i*width, 0, width, analyserDataArray[i]);
+
+					mapaCanvasCtx.beginPath();
+					mapaCanvasCtx.fillStyle="hsl("+analyserDataArray[i]*1.1719+",100%,50%)";
+					mapaCanvasCtx.fillRect(mapaCanvasLeft, i, 1, 1);
+					mapaCanvasCtx.stroke();
+
+					bandas[Math.floor(i/len*3)]+=(analyserDataArray[i]-backAnalyserDataArray[i])*energy*2*3*sliderPowerFactor/len;
+
+
+					
+					
+
+					
+				}
+
+				ctx.stroke();
+/*
+				for(var i = 0; i<len; i++){
+					dEnergy_zones[Math.floor(i/len*3)]+=Math.abs(analyserDataArray[i]-backAnalyserDataArray[i]);
+					mapaCanvasCtx.beginPath();
+					mapaCanvasCtx.fillStyle="hsl("+(analyserDataArray[i]-backAnalyserDataArray[i])*energy*2+",100%,50%)";
+					mapaCanvasCtx.fillRect(mapaCanvasLeft, 257+i, 1, 1);
+					mapaCanvasCtx.stroke();
+				}
+*/
+
+				for(var i = 0; i<len; i++){
+					mapaCanvasCtx.beginPath();
+					mapaCanvasCtx.fillStyle="hsl(0,0%,"+bandas[i]+"%)";
+					mapaCanvasCtx.fillRect(mapaCanvasLeft, 257+50*i, 1, 50);
+					mapaCanvasCtx.stroke();
+				}
+
+				mapaCanvasLeft++;
+				if(mapaCanvasLeft>900){
+					mapaCanvasLeft=0;
+					mapaCanvasCtx.clearRect(0,0, mapaCanvas.width, mapaCanvas.height);
+				}
+
+				dEnergy = Math.abs((backEnergy-energy)/dt);
+				
+
+				ctx.beginPath();
+				
+				if(thresholdEnergy!==thresholdEnergy){thresholdEnergy=0;}
+				if(thresholdEnergy<dEnergy && new Date()-backBeatTime>200){
+					backBeatTime=new Date();
+					ctx.fillStyle="#F00";
+					
+				}else{
+					ctx.fillStyle="#000";
+					
+				}
+
+				if(new Date()-meanEnergyBackTime<500){
+					meanEnergy[meanEnergyIndex]=energy;
+					meanEnergyIndex++;
+				}else{
+					meanEnergyBackTime=new Date();
+					meanEnergyIndex=0;
+				}
+
+				ctx.fillRect(0, height/2, 100, dEnergy*100);
+				ctx.stroke();
+
+				
+
+				var meanEnergyTotal=meanEnergy.reduce(function(a,b){return a+b}, 0)/meanEnergy.length;
+				var lightness=normalExp(0.2*meanEnergyTotal+0.8*energy)*60;
+
+				
+/*
+				mapaCanvasCtx.beginPath();
+				gray=compressor(energy)*300;
+				mapaCanvasCtx.fillStyle="hsl("+gray+",100%,50%)";
+				mapaCanvasCtx.fillRect(mapaCanvasLeft, 100, 1, 100);
+				mapaCanvasCtx.stroke();
+
+
+				
+				mapaCanvasCtx.beginPath();
+				var meanEnergyTotal=meanEnergy.reduce(function(a,b){return a+b}, 0)/meanEnergy.length;
+				gray=compressor(meanEnergyTotal)*300;
+				mapaCanvasCtx.fillStyle="hsl("+gray+",100%,50%)";
+				mapaCanvasCtx.fillRect(mapaCanvasLeft, 200, 1, 100);
+				mapaCanvasCtx.stroke();
+
+
+				mapaCanvasCtx.beginPath();
+				gray=compressor(0.5*meanEnergyTotal+0.5*energy)*300;
+				mapaCanvasCtx.fillStyle="hsl("+gray+",100%,50%)";
+				mapaCanvasCtx.fillRect(mapaCanvasLeft, 0, 1, 100);
+				mapaCanvasCtx.stroke();
+				var lightness=normalExp(0.2*meanEnergyTotal+0.8*energy)*60;*/
+
+
+				if(energy>meanEnergyTotal ){
+					
+					if(!onPeak){
+						//console.log("BEGIN PEAK"+energy/meanEnergyTotal);
+						onPeak=true;
+						onPeakMax=energy;
+					}
+
+					if(onPeakMax>energy){
+						console.log("Peak MAX");
+					}
+					if(onPeakMax<energy){
+						energy=onPeakMax;
+					}
+
+
+					peakFrac=energy/meanEnergyTotal;
+
+					ctx.beginPath();
+					ctx.fillStyle="#0F0";
+					ctx.fillRect(200, height/2, 100, energy/meanEnergyTotal*100);
+				
+					ctx.stroke();
+					colorBeat(energy/meanEnergyTotal);
+				
+				}else{
+					onPeak=false;
+				}
+
+
+
+
+
+
+				//mapaCanvasCtx.beginPath();
+				//document.body.style.background="hsl("+Math.abs(meanEnergyTotal-energy)*1000+", 100% , 50%)";
+				//mapaCanvasCtx.fillStyle="hsl("+gray+",100%,50%)";
+				//mapaCanvasCtx.fillRect(mapaCanvasLeft, 300, 1, 100);
+				//mapaCanvasCtx.stroke();
+
+				
+				
+				//console.log("Delta Energy = "+(backEnergy-energy)/dt);
+				
+				// Copy (For derivative)
+				
+				for(var i = 0; i<analyserDataArray.length;i++){
+					backAnalyserDataArray[i]=analyserDataArray[i];
+				}
+				backAnalyserDataArrayIndex++;
+				if(backAnalyserDataArrayIndex>9){backAnalyserDataArrayIndex=0;}
+
+				backTime=new Date();
+				var dE=(backEnergy-energy)*2.5/20;
+				if(dE>25){dE=25;}
+
+				//document.body.style.background="hsl("+color[0]+", 100%, "+lightness+"%)";
+				backEnergy=energy;
+
+				var rgbColor=hsl2rgb(parseInt(hue),100,parseInt(lightness));
+				//console.log(rgbColor);
+				ponerR(rgbColor[0]);
+				ponerG(rgbColor[1]);
+				ponerB(rgbColor[2]);
+				outputColor(rgbColor);
+
+
+				
+
+
+
+				window.requestAnimationFrame(analiza);
+			}
+
+			window.onload=function(){
+				canvas=document.getElementById("main_canvas");
+				mapaCanvas=document.getElementById("mapa_canvas");
+
+				ctx=canvas.getContext("2d");
+				mapaCanvasCtx=mapaCanvas.getContext("2d");
+				document.getElementById("slider_sesgo").addEventListener("input",function(){
+					document.getElementById("slider_sesgo_label").innerText="Sesgo ("+this.value+")";
+					sliderSesgo=parseInt(this.value);});
+				document.getElementById("slider_hue").addEventListener("input",function(){
+					document.getElementById("slider_hue_label").innerText="Hue ("+this.value+")";
+					sliderHue=parseInt(this.value);});
+				document.getElementById("slider_timing").addEventListener("input",function(){
+					document.getElementById("slider_timing_label").innerText="Color timing ("+this.value+"ms)";
+					sliderTiming=parseInt(this.value);});
+
+				document.getElementById("slider_power_factor").addEventListener("input",function(){
+					sliderPowerFactor=parseInt(this.value)/10;
+					document.getElementById("slider_power_factor_label").innerText="Power factor (x"+sliderPowerFactor+")";
+				});
+					
+				loadMusic();
+				
+			}		
+		</script>
+	</head>
+	<body>
+		<canvas id="main_canvas" width="600" height="400" style="position:absolute; top:0px; left:0px;width:600px; height:400px; border:1px solid #000; z-index:1; background: #FFF;">
+			
+		</canvas>
+		<canvas id="mapa_canvas" width="900" height="512" style="position:absolute; top:0px; left:600px;width:900px; height:512px; border:1px solid #000; z-index:1; background: #FFF;">
+			
+		</canvas>
+		<div id="outputColor" style="position:absolute; top:400px; left:0px; width:50px; height:50px;"></div>
+		<div id="panel" style="position:absolute; top:450; left:0px; width:200px; height:auto;">
+			<table border="0">
+
+				<tr><td class="td_slider"><span id="slider_sesgo_label">Sesgo</span>:</td><td><input type="range" min="0" max="180" value="180" class="slider" id="slider_sesgo"></td></tr>
+				<tr><td class="td_slider"><span id="slider_hue_label">Hue</span>:</td><td><input type="range" min="0" max="360" value="0" class="slider" id="slider_hue"></td></tr>
+				<tr><td class="td_slider"><span id="slider_timing_label">Color timing (300ms)</span>:</td><td><input type="range" min="0" max="10000" value="300" class="slider" id="slider_timing"></td></tr>
+				<tr><td class="td_slider"><span id="slider_power_factor_label">Power factor (x1)</span>:</td><td><input type="range" min="0" max="100" value="10" class="slider" id="slider_power_factor"></td></tr>
+			</table>
+		</div>
+		
+	</body>
+</html>

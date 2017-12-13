@@ -1,0 +1,523 @@
+<html>
+	<head>
+		<title>Led Control PreAlpha</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<style type="text/css">
+			html, body {
+				background:#FFF;
+				padding:0;
+				margin:0;
+				width:100%;
+				height:100%;
+			}
+
+			.td_slider {
+				min-width:100px;
+				width:auto;
+			}
+
+			.slider {
+
+				width: 200px; /* Full-width */
+				height: 25px; /* Specified height */
+				opacity: 0.7; /* Set transparency (for mouse-over effects on hover) */
+				-webkit-transition: .2s; /* 0.2 seconds transition on hover */
+				transition: opacity .2s;
+			}
+
+		</style>
+		<script src="socket.js"></script>
+		<script type="text/javascript" src="hsl2rgb.js"></script>
+		<script type="text/javascript">
+
+			var socket = io.connect('http://localhost:8080');
+
+			var backEnviadoR=new Date();
+			var backEnviadoG=new Date();
+			var backEnviadoB=new Date();
+			function enviar(data){
+					socket.emit('d',data);
+			}
+
+			function constraint(a,b,c){
+				if(a<b){
+					return b;
+				}else if(a>c){
+					return c;
+				}else{
+					return a;
+				}
+			}
+
+
+			var mapa = (function(){
+				var r=[];
+				for(var i = 0; i<=35; i++){
+					if(i<10){
+						r[i] = ""+i;
+					}else{
+						r[i] = String.fromCharCode(55+i);
+					}
+				}
+				return r;
+			})();
+			function getCode(value){
+				return mapa[parseInt(value/35)]+mapa[value%35];
+			}
+			function ponerR(value){
+				if(new Date()-backEnviadoR>50){
+					enviar(getCode(gamma(value)));
+					backEnviadoR=new Date();
+				}
+				
+			}
+
+			function ponerG(value){
+				
+				if(new Date()-backEnviadoG>50){
+					enviar(getCode(512+gamma(value)));
+					backEnviadoG=new Date();
+				}
+			}
+
+			function ponerB(value){				
+				if(new Date()-backEnviadoB>50){
+					enviar(getCode(256+gamma(value)));
+					backEnviadoB=new Date();
+				}
+			}
+
+
+
+			// Programa
+
+			var program=0;
+			// Audio Analysis
+
+			var canvas, ctx, el, audiogg, analyser, analyserBufferLength, analyserDataArray, backTime, backBeatTime=new Date();
+			var backEnergy;
+			var onPeak=false;
+			var onPeakMax=0;
+
+			var meanEnergy=[];// Mean one second energy
+			var meanEnergyBackTime=0;// Mean one second energy
+			var meanEnergyIndex=0;
+
+			var thresholdEnergy=0;
+			var thresholdEnergyTime=new Date();
+			var thresholdEnergyIncrease=false;
+			var thresholdEnergyTimeConstant = 0.0001;
+
+			var lastBeat=new Date();
+			var mapaCanvas, mapaCanvasLeft=0, mapaCanvasCtx;
+
+			var outputColorElm;
+
+			var backAnalyserDataArray, backAnalyserDataArrayIndex=0;
+
+
+
+			var roots=[];
+			var rootsI=0;
+			var rootsTime=0;
+
+
+			var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+			// Color
+			var hue=0;
+
+			var sliderHue=0;
+			var sliderSesgo=180;
+			var sliderTiming=2000;
+			var sliderPowerFactor=1;
+			var sliderBrightness=1;
+
+			var __FFT_SIZE__=2048;
+
+			function outputColor(rgbColor){
+				if(!outputColorElm){
+					outputColorElm=document.getElementById("outputColor");
+				}
+				outputColorElm.style.background="rgb("+rgbColor[0]+","+rgbColor[1]+","+rgbColor[2]+")";
+			}
+			
+
+			function loadMusic(){
+				audiogg = new Audio("rl.mp3");			// AOISUYIDUGNUIYWD
+				audiogg.play();
+
+				source = audioCtx.createMediaElementSource(audiogg);
+				analyser = audioCtx.createAnalyser();
+				analyser.fftSize = __FFT_SIZE__;
+				analyser.smoothingTimeConstant=0.9;
+				analyserBufferLength = analyser.frequencyBinCount;
+				
+				analyserDataArray = new Uint8Array(analyserBufferLength);
+				
+				backAnalyserDataArray=new Uint8Array(analyserBufferLength);
+				
+				derivativeAnalyserDataArray = new Uint8Array(analyserBufferLength);
+
+				source.connect(analyser);
+				source.connect(audioCtx.destination);
+				backTime=new Date();
+				meanEnergyBackTime=new Date();
+				analiza();
+			}
+
+
+			function gamma(value){
+
+				return value;//parseInt(Math.pow(value/255, 1.2)*255);
+			}
+
+			let softmax=(x)=>0.5+Math.atan(6*x)/Math.PI;
+			let normalExp=(x)=>Math.exp((x-1)*4);
+			let square=(x)=>x*x;
+			let colorBeat=(fracEnergy)=>{
+				var deltaHue=0, distanceHue;
+				if(fracEnergy>1.5){ fracEnergy=1.5;}
+				if(new Date()-lastBeat > sliderTiming){
+					//console.log("MiniBeat"+fracEnergy);
+					lastBeat=new Date();
+					deltaHue=fracEnergy*90*sliderPowerFactor*(1-2*Math.random());
+				}else{return;}
+
+				hue+=deltaHue;
+				if(hue<0){hue+=360;}
+				hue%=360;
+
+				if(Math.abs(hue-sliderHue)>180){
+					distanceHue=360-Math.abs(hue-sliderHue);
+				}else{
+					distanceHue=Math.abs(hue-sliderHue);
+				}
+
+				if(distanceHue>sliderSesgo){
+					hue=hue*sliderSesgo/180+sliderHue-sliderSesgo;
+				}
+
+				if(hue<0){hue+=360;}
+				hue%=360;
+			};
+
+			function compressor(x){
+				if(x>1){ return 1;}
+				if(x<0){ return 0;}
+				
+				return x;//Math.pow(x,3);
+			}
+
+
+			let normalExpArray = (analyserDataArray,max)=> {
+				let len=analyserDataArray.length;
+				var returnArray=new Uint8Array(len);
+				while(len--){
+					returnArray[len]=(analyserDataArray[len]/max)*max;
+				}
+				return returnArray;
+			};
+
+			let convertAnalysisArray=(analyserDataArray,max)=> {
+				let len=analyserDataArray.length;
+				var returnArray=new Uint8Array(len);
+				while(len--){
+					returnArray[len]=Math.log(analyserDataArray[len]/max+1)/Math.log(2)*max;
+				}
+				return returnArray;
+			};
+
+			let lightnessCompressor=(x)=>{
+				var y=1-2*x;
+				return x;
+			};
+
+			let normalLog=(x)=>Math.log(x+1)/Math.log(2);
+
+			let computeRMS=(x)=> {
+				var rms=0;
+				var i=x.length;
+				while(i--){
+					rms+=x[i];
+				}
+				rms/=x.length;
+				return Math.sqrt(rms);
+			}
+
+			let lightnessGamma=(x)=>{
+				if(x>1){ return 1;}
+				if(x<0){ return 0;}
+				return Math.pow(x,3.2);
+			};
+
+			var backRMS, backEE;
+			var onBeatEnergy;
+			var onBeat=false;
+			var cuadrante=60;
+			function analiza(){
+				var energy=0;
+				var dateNow=+new Date();
+				var RMS=0;
+
+				var bandas=[0,0,0,0,0,0];
+				var bassBand=0;
+
+				analyser.getByteFrequencyData(analyserDataArray);
+				
+				analyserDataArray=convertAnalysisArray(analyserDataArray,256);
+
+				var len=analyserDataArray.length;
+				var width=canvas.width/len;
+				var height=canvas.height;
+
+				var lightness=0;
+
+
+				
+
+				ctx.clearRect(0,0, canvas.width, canvas.height);
+
+
+				ctx.beginPath();
+				
+
+				ctx.fillStyle="#FF0000";
+
+				for(var i = 0; i<len; i++){
+					energy+=analyserDataArray[i]/1024/256;
+
+					bandas[parseInt(i*6/len)]+=analyserDataArray[i]/1024/256*6;
+					if(i<128){
+						bassBand+=analyserDataArray[i]/256/128;
+					}else{
+						bassBand+=analyserDataArray[i]/256/128*Math.exp(-Math.pow(i-128,2));
+					}
+
+					ctx.fillRect(i*width, height-analyserDataArray[i], width,height);
+
+					
+
+					
+				}
+
+				ctx.stroke();
+
+				// MEAN ENERGY BLOCK
+
+				if(new Date()-meanEnergyBackTime<1000){
+					meanEnergy[meanEnergyIndex]=energy;
+					meanEnergyIndex++;
+				}else{
+					meanEnergyBackTime=new Date();
+					meanEnergyIndex=0;
+				}
+
+				
+
+				var meanEnergyTotal=meanEnergy.reduce(function(a,b){return a+b}, 0)/meanEnergy.length;
+
+
+				// BASS BAND
+
+				ctx.beginPath();
+				
+
+				ctx.strokeStyle="#00FFFF";
+				ctx.moveTo(0,height-bassBand*256);
+				ctx.lineTo(width*128,height-bassBand*256);
+
+				ctx.stroke();
+
+				
+
+				mapaCanvasLeft++;
+				if(mapaCanvasLeft>900){
+					mapaCanvasLeft=0;
+					mapaCanvasCtx.clearRect(0,0, mapaCanvas.width, mapaCanvas.height);
+				}
+
+
+				// AVERAGE FOR RMS
+				if(dateNow-rootsTime > 200){rootsTime=+new Date(); rootsI=0;}
+
+				roots[rootsI++]=Math.pow(energy,2);
+				RMS=computeRMS(roots);
+
+				var lE=0;
+				if(bandas[0]>bandas[2] && bandas[0]>bandas[3]){
+					lE=bandas[0]*0.8+bandas[2]+bandas[3];
+				}
+
+				if(bandas[2]>bandas[0] && bandas[2]>bandas[3]){
+					lE=bandas[2]*0.8+bandas[0]+bandas[3];
+				}
+
+				if(bandas[3]>bandas[2] && bandas[3]>bandas[1]){
+					lE=bandas[3]*0.8+bandas[0]+bandas[2];
+				}
+				
+				lightness=0.05+lE/3;//(0.4*bassBand+0.1*bandas[1]+0.6*bandas[2]);
+
+
+				mapaCanvasCtx.beginPath();
+				mapaCanvasCtx.strokeStyle="#000000";
+				mapaCanvasCtx.moveTo(mapaCanvasLeft,height-(backRMS)*256);
+				mapaCanvasCtx.lineTo(mapaCanvasLeft+1,height-(RMS)*256);
+				mapaCanvasCtx.stroke();
+
+				var EE=(energy-meanEnergyTotal);
+				mapaCanvasCtx.beginPath();
+				mapaCanvasCtx.strokeStyle="#FF0000";
+				mapaCanvasCtx.moveTo(mapaCanvasLeft,height-backEE*1000);
+				mapaCanvasCtx.lineTo(mapaCanvasLeft+1,height-EE*1000);
+				mapaCanvasCtx.stroke();
+				backEE=EE;
+
+				if(thresholdEnergy<EE){
+					if(!onBeat){
+						onBeat=true;
+						onBeatEnergy=thresholdEnergy;
+					}
+					thresholdEnergy=EE;
+					thresholdEnergyTime=+new Date();
+				}else{
+
+					if(onBeat){
+						onBeat=false;
+
+						colorBeat(1+100*(EE-onBeatEnergy));
+					}
+
+					thresholdEnergy-=0.000001*(+new Date()-thresholdEnergyTime);
+				}
+
+				mapaCanvasCtx.beginPath();
+				mapaCanvasCtx.strokeStyle="#FFFF00";
+				mapaCanvasCtx.moveTo(mapaCanvasLeft,height-thresholdEnergy*1000);
+				mapaCanvasCtx.lineTo(mapaCanvasLeft+1,height-thresholdEnergy*1000);
+				mapaCanvasCtx.stroke();
+
+
+
+
+
+
+				
+
+
+
+				//console.log(RMS);
+				ctx.beginPath();
+				
+
+				ctx.strokeStyle="#0000FF";
+				ctx.moveTo(0,height-RMS*128);
+				ctx.lineTo(canvas.width,height-RMS*128);
+
+				ctx.stroke();
+
+				ctx.beginPath();
+				
+
+				ctx.strokeStyle="#00FF00";
+				ctx.moveTo(0,height-energy*128);
+				ctx.lineTo(canvas.width,height-energy*128);
+
+				ctx.stroke();
+
+
+				
+				//console.log(bandas[1]);
+				ctx.beginPath();
+				
+
+				ctx.strokeStyle="#00FF00";
+				
+				for(var i = 0; i<6; i++){
+					ctx.moveTo(canvas.width/6*i,height-bandas[i]*256);
+					ctx.lineTo(canvas.width/6*(i+1),height-bandas[i]*256);
+
+				}
+
+
+				ctx.stroke();
+
+				//hue=cuadrante;
+				//hue%=360;
+
+
+				var rgbColor=hsl2rgb(parseInt(hue),100, lightnessGamma(lightness*sliderBrightness)*100);
+				//console.log(rgbColor);
+				ponerR(rgbColor[0]);
+				ponerG(rgbColor[1]);
+				ponerB(rgbColor[2]);
+				outputColor(rgbColor);
+
+
+
+
+
+				
+
+
+				backRMS=RMS;
+				window.requestAnimationFrame(analiza);
+			}
+
+
+
+
+			window.onload=function(){
+				canvas=document.getElementById("main_canvas");
+				mapaCanvas=document.getElementById("mapa_canvas");
+
+				ctx=canvas.getContext("2d");
+				mapaCanvasCtx=mapaCanvas.getContext("2d");
+				document.getElementById("slider_sesgo").addEventListener("input",function(){
+					document.getElementById("slider_sesgo_label").innerText="Sesgo ("+this.value+")";
+					sliderSesgo=parseInt(this.value);});
+				document.getElementById("slider_hue").addEventListener("input",function(){
+					document.getElementById("slider_hue_label").innerText="Hue ("+this.value+")";
+					sliderHue=parseInt(this.value);});
+				document.getElementById("slider_timing").addEventListener("input",function(){
+					document.getElementById("slider_timing_label").innerText="Color timing ("+this.value+"ms)";
+					sliderTiming=parseInt(this.value);});
+
+				document.getElementById("slider_brightness").addEventListener("input",function(){
+					document.getElementById("slider_brightness_label").innerText="Brightness ("+this.value+"%)";
+					sliderBrightness=parseInt(this.value)/100;});
+
+				
+
+				document.getElementById("slider_power_factor").addEventListener("input",function(){
+					sliderPowerFactor=parseInt(this.value)/10;
+					document.getElementById("slider_power_factor_label").innerText="Power factor (x"+sliderPowerFactor+")";
+				});
+					
+				loadMusic();
+				
+			}		
+		</script>
+	</head>
+	<body>
+		<canvas id="main_canvas" width="600" height="256" style="position:absolute; top:0px; left:0px;width:600px; height:400px; border:1px solid #000; z-index:1; background: #FFF;">
+			
+		</canvas>
+		<canvas id="mapa_canvas" width="900" height="512" style="position:absolute; top:0px; left:600px;width:900px; height:512px; border:1px solid #000; z-index:1; background: #FFF;">
+			
+		</canvas>
+		<div id="outputColor" style="position:absolute; top:400px; left:0px; width:50px; height:50px;"></div>
+		<div id="panel" style="position:absolute; top:450; left:0px; width:200px; height:auto;">
+			<table border="0">
+
+				<tr><td class="td_slider"><span id="slider_sesgo_label">Sesgo</span>:</td><td><input type="range" min="0" max="180" value="180" class="slider" id="slider_sesgo"></td></tr>
+				<tr><td class="td_slider"><span id="slider_hue_label">Hue</span>:</td><td><input type="range" min="0" max="360" value="0" class="slider" id="slider_hue"></td></tr>
+				<tr><td class="td_slider"><span id="slider_timing_label">Color timing (2000ms)</span>:</td><td><input type="range" min="0" max="10000" value="2000" class="slider" id="slider_timing"></td></tr>
+				<tr><td class="td_slider"><span id="slider_power_factor_label">Power factor (x1)</span>:</td><td><input type="range" min="0" max="100" value="10" class="slider" id="slider_power_factor"></td></tr>
+				<tr><td class="td_slider"><span id="slider_brightness_label">Brightness (100%)</span>:</td><td><input type="range" min="0" max="100" value="100" class="slider" id="slider_brightness"></td></tr>
+			</table>
+		</div>
+		
+	</body>
+</html>
